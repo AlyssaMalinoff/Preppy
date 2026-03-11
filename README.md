@@ -1,10 +1,6 @@
-# Preppy (Recipe Warehouse MVP)
+# Preppy (Recipe Warehouse WIP)
 
-Preppy is a CLI-first recipe workflow tool. The current MVP helps you ingest and clean recipes from PDFs so your recipe database stays structured, searchable, and ready for future meal-planning and grocery-list features.
-
-## Project overview
-
-Preppy currently focuses on:
+This project currently focuses on:
 
 - importing recipes from text-based PDFs (single file or batch folder),
 - extracting core recipe sections (title, ingredients, instructions, servings),
@@ -28,3 +24,4 @@ Preppy currently focuses on:
 - `preppy recipe list`
 - `preppy recipe show <id>`
 - `preppy recipe review-pending`
+
