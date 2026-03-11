@@ -310,3 +310,26 @@ Finish braise.
     assert any("leek" in name for name in ingredient_names)
     assert any("butter" in name for name in ingredient_names)
 
+
+def test_nutrition_lines_are_omitted_and_flagged_for_review():
+    raw_text = """
+Thai Beef with Basil
+Ingredients:
+1 lb ground beef
+12 g fat
+2 g fiber
+Instructions:
+Step 1
+Cook beef.
+Nutrition Per Serving
+Per serving: 240 calories
+"""
+    _, _, instructions, ingredients, issues, _ = parse_recipe_text(raw_text)
+    ingredient_names = [item.name_normalized for item in ingredients]
+
+    assert all("fat" not in name or "ground" in name for name in ingredient_names)
+    assert all("fiber" not in name for name in ingredient_names)
+    assert instructions is not None
+    assert "nutrition per serving" not in instructions.lower()
+    assert any(issue.issue_type == "omitted_meta" and issue.field_name == "nutrition_meta" for issue in issues)
+

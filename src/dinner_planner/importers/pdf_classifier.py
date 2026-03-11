@@ -11,6 +11,19 @@ SERVINGS_HEADERS = {"yield", "servings", "serves"}
 BOUNDARY_PREFIXES = ("tags", "private notes", "leave a private note", "see related", "tip")
 UNIT_HINTS = ("tbsp", "tablespoon", "tsp", "teaspoon", "cup", "lb", "oz", "g", "kg", "clove", "can")
 TITLE_NOISE = ("for the new york times", "total time", "prep time", "cook time", "subscribe")
+NUTRITION_HINTS = (
+    "nutrition",
+    "nutritional analysis",
+    "calories",
+    "per serving",
+    "protein",
+    "fat",
+    "carb",
+    "carbohydrate",
+    "fiber",
+    "sodium",
+    "cholesterol",
+)
 
 
 @dataclass(slots=True)
@@ -25,6 +38,21 @@ def _is_ingredient_like(text: str) -> bool:
     if re.match(r"^\d+([./]\d+)?(\s+\d+/\d+)?", text):
         return True
     if any(f" {hint}" in f" {lower}" for hint in UNIT_HINTS) and "," in text:
+        return True
+    return False
+
+
+def _is_nutrition_meta_like(text: str) -> bool:
+    lower = text.lower()
+    if any(hint in lower for hint in NUTRITION_HINTS):
+        return True
+    if re.search(r"\b\d+\s*(calories?|kcal)\b", lower):
+        return True
+    if re.search(r"\b\d+\s*g\s*(fat|protein|fiber|carb|carbohydrates?)\b", lower):
+        return True
+    if re.search(r"\b\d+\s*mg\s*(sodium|cholesterol)\b", lower):
+        return True
+    if re.search(r"\b\d+%\b", lower):
         return True
     return False
 
@@ -49,6 +77,9 @@ def classify_lines(lines: list[SegmentedLine]) -> list[ClassifiedLine]:
             continue
         if any(lower.startswith(prefix) for prefix in BOUNDARY_PREFIXES):
             out.append(ClassifiedLine(item, "boundary", 0.95))
+            continue
+        if _is_nutrition_meta_like(text):
+            out.append(ClassifiedLine(item, "nutrition_meta", 0.9))
             continue
         if _is_ingredient_like(text):
             out.append(ClassifiedLine(item, "ingredient", 0.82))

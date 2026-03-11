@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from dinner_planner.importers.pdf_classifier import ClassifiedLine
 from dinner_planner.models import ParseIssue
@@ -15,6 +15,7 @@ class ExtractedSections:
     instruction_lines: list[str]
     confidence: float
     issues: list[ParseIssue]
+    nutrition_meta_lines: list[str] = field(default_factory=list)
 
 
 def _find_first_index(items: list[ClassifiedLine], predicate) -> int | None:
@@ -65,11 +66,14 @@ def extract_sections(classified: list[ClassifiedLine]) -> ExtractedSections:
     servings = _extract_servings(classified)
 
     ingredient_lines: list[str] = []
+    nutrition_meta_lines = [item.line.text for item in classified if item.label == "nutrition_meta"]
     if ingredients_header_idx is not None:
         end_idx = instructions_start_idx if instructions_start_idx is not None else len(classified)
         for item in classified[ingredients_header_idx + 1 : end_idx]:
             if item.label == "boundary":
                 break
+            if item.label == "nutrition_meta":
+                continue
             if item.label in {"ingredient", "other", "title_candidate"} and not item.label.startswith("header:"):
                 ingredient_lines.append(item.line.text)
     else:
@@ -83,6 +87,8 @@ def extract_sections(classified: list[ClassifiedLine]) -> ExtractedSections:
         for item in classified[start_idx:]:
             if item.label == "boundary":
                 break
+            if item.label == "nutrition_meta":
+                continue
             instruction_lines.append(item.line.text)
 
     confidence = 0.2
@@ -107,5 +113,6 @@ def extract_sections(classified: list[ClassifiedLine]) -> ExtractedSections:
         instruction_lines=instruction_lines,
         confidence=min(confidence, 1.0),
         issues=issues,
+        nutrition_meta_lines=nutrition_meta_lines,
     )
 
