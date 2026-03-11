@@ -14,3 +14,10 @@ def test_normalize_fraction_quantity():
     assert result.quantity_unit == "cup"
     assert result.name_normalized == "chickpeas"
 
+
+def test_unknown_unit_token_moves_into_name():
+    result = normalize_ingredient_line("1 lemo n")
+    assert result.quantity_value == 1.0
+    assert result.quantity_unit is None
+    assert result.name_normalized == "lemon"
+

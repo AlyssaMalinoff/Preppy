@@ -66,6 +66,8 @@ def _parse_quantity(value: str) -> Optional[float]:
 
 def _clean_name(raw_name: str) -> str:
     name = raw_name.strip().lower()
+    # Repair common OCR split like "lemo n" -> "lemon".
+    name = re.sub(r"\b([a-z]{3,})\s([a-z])\b", r"\1\2", name)
     name = re.sub(r"\(.*?\)", "", name).strip()
     name = re.sub(r"\s+", " ", name)
     return INGREDIENT_ALIASES.get(name, name)
@@ -75,7 +77,7 @@ def _clean_unit(raw_unit: Optional[str]) -> Optional[str]:
     if not raw_unit:
         return None
     unit = raw_unit.lower().rstrip(".")
-    return UNIT_ALIASES.get(unit, unit)
+    return UNIT_ALIASES.get(unit)
 
 
 def normalize_ingredient_line(line: str) -> IngredientRecord:
@@ -94,8 +96,13 @@ def normalize_ingredient_line(line: str) -> IngredientRecord:
         )
 
     qty = _parse_quantity(match.group("qty") or "")
-    unit = _clean_unit(match.group("unit"))
-    name = _clean_name(match.group("name") or text)
+    raw_unit = match.group("unit")
+    unit = _clean_unit(raw_unit)
+    name_source = match.group("name") or text
+    if raw_unit and unit is None:
+        # Unknown "unit" token is usually part of the ingredient name.
+        name_source = f"{raw_unit} {name_source}"
+    name = _clean_name(name_source)
     return IngredientRecord(
         raw_text=line,
         name_normalized=name,

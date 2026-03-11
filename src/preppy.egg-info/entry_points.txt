@@ -1,0 +1,2 @@
+[console_scripts]
+preppy = dinner_planner.cli:main

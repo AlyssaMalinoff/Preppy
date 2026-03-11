@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from fractions import Fraction
 from pathlib import Path
 
 import typer
@@ -26,6 +27,18 @@ def _init_connection(db: Path):
     conn = connect(db)
     init_db(conn)
     return conn
+
+
+def _format_quantity(value: float) -> str:
+    # Render quantity values in kitchen-friendly mixed fractions.
+    frac = Fraction(value).limit_denominator(16)
+    whole = frac.numerator // frac.denominator
+    remainder = frac.numerator % frac.denominator
+    if remainder == 0:
+        return str(whole)
+    if whole == 0:
+        return f"{remainder}/{frac.denominator}"
+    return f"{whole} {remainder}/{frac.denominator}"
 
 
 @app.command("init-db")
@@ -124,8 +137,12 @@ def recipe_show(
     for item in ingredients:
         qty = item["quantity_value"]
         unit = item["quantity_unit"] or ""
-        qty_text = f"{qty:g} {unit}".strip() if qty is not None else ""
-        typer.echo(f"  - {qty_text} {item['name_normalized']}".strip())
+        qty_text = f"{_format_quantity(qty)} {unit}".strip() if qty is not None else ""
+        name = (item["name_normalized"] or "").strip()
+        if qty_text:
+            typer.echo(f"  - {qty_text} {name}".strip())
+        else:
+            typer.echo(f"  - {name}".strip())
     typer.echo("Instructions:")
     typer.echo(recipe["instructions"] or "(none parsed)")
 
