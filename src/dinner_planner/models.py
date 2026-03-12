@@ -21,3 +21,12 @@ class ParseIssue:
     message: str
     snippet: Optional[str] = None
 
+
+@dataclass(slots=True)
+class RecipeClassification:
+    difficulty_level: str
+    dish_category: str
+    seasonality_tags: list[str]
+    repeat_policy: str
+    popularity_score: float
+

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 from typing import Iterable
@@ -29,6 +30,12 @@ def init_db(conn: sqlite3.Connection) -> None:
             status TEXT NOT NULL DEFAULT 'active',
             season_tag TEXT,
             day_priority INTEGER,
+            difficulty_level TEXT,
+            dish_category TEXT,
+            seasonality_tags TEXT,
+            repeat_policy TEXT,
+            popularity_score REAL,
+            classification_updated_at TEXT,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
 
@@ -54,7 +61,26 @@ def init_db(conn: sqlite3.Connection) -> None:
         );
         """
     )
+    _ensure_recipe_metadata_columns(conn)
     conn.commit()
+
+
+def _ensure_recipe_metadata_columns(conn: sqlite3.Connection) -> None:
+    columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(recipes)").fetchall()
+    }
+    required = {
+        "difficulty_level": "TEXT",
+        "dish_category": "TEXT",
+        "seasonality_tags": "TEXT",
+        "repeat_policy": "TEXT",
+        "popularity_score": "REAL",
+        "classification_updated_at": "TEXT",
+    }
+    for column, dtype in required.items():
+        if column not in columns:
+            conn.execute(f"ALTER TABLE recipes ADD COLUMN {column} {dtype}")
 
 
 def insert_recipe(
@@ -164,6 +190,74 @@ def list_pending_issues(conn: sqlite3.Connection) -> list[sqlite3.Row]:
         JOIN recipes r ON r.id = pi.recipe_id
         WHERE pi.resolved = 0
         ORDER BY pi.id
+        """
+    )
+    return list(cursor.fetchall())
+
+
+def list_recipes_for_classification(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    cursor = conn.execute(
+        """
+        SELECT id, title, instructions
+        FROM recipes
+        ORDER BY id
+        """
+    )
+    return list(cursor.fetchall())
+
+
+def get_ingredient_names(conn: sqlite3.Connection, recipe_id: int) -> list[str]:
+    cursor = conn.execute(
+        """
+        SELECT name_normalized
+        FROM ingredients
+        WHERE recipe_id = ?
+        ORDER BY id
+        """,
+        (recipe_id,),
+    )
+    return [row["name_normalized"] for row in cursor.fetchall()]
+
+
+def update_recipe_classification(
+    conn: sqlite3.Connection,
+    *,
+    recipe_id: int,
+    difficulty_level: str,
+    dish_category: str,
+    seasonality_tags: list[str],
+    repeat_policy: str,
+    popularity_score: float,
+) -> None:
+    conn.execute(
+        """
+        UPDATE recipes
+        SET difficulty_level = ?,
+            dish_category = ?,
+            seasonality_tags = ?,
+            repeat_policy = ?,
+            popularity_score = ?,
+            classification_updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (
+            difficulty_level,
+            dish_category,
+            json.dumps(seasonality_tags),
+            repeat_policy,
+            popularity_score,
+            recipe_id,
+        ),
+    )
+    conn.commit()
+
+
+def list_planner_candidates(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    cursor = conn.execute(
+        """
+        SELECT id, title, difficulty_level, dish_category, seasonality_tags, repeat_policy, popularity_score
+        FROM recipes
+        ORDER BY id
         """
     )
     return list(cursor.fetchall())
