@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from fractions import Fraction
 from datetime import date, datetime
 from pathlib import Path
@@ -9,9 +10,11 @@ import typer
 
 from dinner_planner.classification.rules import classify_recipe
 from dinner_planner.importers.pdf_importer import extract_pdf_text, parse_recipe_text
+from dinner_planner.normalization import normalize_ingredient_line
 from dinner_planner.planner.generator import generate_weekly_plan
 from dinner_planner.planner.models import PlannerRecipe
 from dinner_planner.repository import (
+    apply_recipe_edit,
     connect,
     get_ingredient_names,
     get_ingredients,
@@ -177,6 +180,212 @@ def review_pending(
         )
         if issue["snippet"]:
             typer.echo(f"  snippet: {issue['snippet']}")
+
+
+def _instructions_to_steps(instructions: str | None) -> list[str]:
+    if not instructions:
+        return []
+    lines = [line.strip() for line in instructions.splitlines() if line.strip()]
+    if not lines:
+        return []
+    steps: list[str] = []
+    current: list[str] = []
+    has_step_markers = False
+    for line in lines:
+        if re.match(r"^step\s+\d+\b", line, re.IGNORECASE):
+            has_step_markers = True
+            if current:
+                steps.append(" ".join(current).strip())
+                current = []
+            continue
+        current.append(line)
+    if current:
+        steps.append(" ".join(current).strip())
+    if has_step_markers:
+        return [step for step in steps if step]
+    return ["\n".join(lines)]
+
+
+def _steps_to_instruction_text(steps: list[str]) -> str | None:
+    clean_steps = [step.strip() for step in steps if step.strip()]
+    if not clean_steps:
+        return None
+    lines: list[str] = []
+    for idx, step in enumerate(clean_steps, start=1):
+        lines.append(f"Step {idx}")
+        lines.append(step)
+    return "\n".join(lines).strip()
+
+
+def _edit_instruction_steps(instructions: str | None) -> str | None:
+    steps = _instructions_to_steps(instructions)
+    while True:
+        typer.echo("")
+        typer.echo("Instruction editor:")
+        if steps:
+            for idx, step in enumerate(steps, start=1):
+                typer.echo(f"{idx}. {step}")
+        else:
+            typer.echo("(No steps yet)")
+        typer.echo("Options: [e]dit step, [a]dd step, [r]emove step, [d]one")
+        action = typer.prompt("Choose action").strip().lower()
+        if action == "d":
+            return _steps_to_instruction_text(steps)
+        if action == "a":
+            new_step = typer.prompt("Add step text").strip()
+            if new_step:
+                steps.append(new_step)
+            continue
+        if action == "e":
+            if not steps:
+                typer.echo("No steps to edit.")
+                continue
+            idx = typer.prompt("Step number to edit", type=int)
+            if idx < 1 or idx > len(steps):
+                typer.echo("Invalid step number.")
+                continue
+            steps[idx - 1] = typer.prompt("Updated step text").strip()
+            continue
+        if action == "r":
+            if not steps:
+                typer.echo("No steps to remove.")
+                continue
+            idx = typer.prompt("Step number to remove", type=int)
+            if idx < 1 or idx > len(steps):
+                typer.echo("Invalid step number.")
+                continue
+            steps.pop(idx - 1)
+            continue
+        typer.echo("Unknown action.")
+
+
+def _edit_ingredient_lines(initial_lines: list[str]) -> list[str]:
+    lines = [line.strip() for line in initial_lines if line.strip()]
+    while True:
+        typer.echo("")
+        typer.echo("Ingredient editor:")
+        for idx, line in enumerate(lines, start=1):
+            typer.echo(f"{idx}. {line}")
+        if not lines:
+            typer.echo("(No ingredients yet)")
+        typer.echo("Options: [e]dit, [a]dd, [r]emove, [d]one")
+        action = typer.prompt("Choose action").strip().lower()
+        if action == "d":
+            return lines
+        if action == "a":
+            raw = typer.prompt("New ingredient line").strip()
+            if raw:
+                lines.append(raw)
+            continue
+        if action == "e":
+            if not lines:
+                typer.echo("No ingredients to edit.")
+                continue
+            idx = typer.prompt("Ingredient number to edit", type=int)
+            if idx < 1 or idx > len(lines):
+                typer.echo("Invalid ingredient number.")
+                continue
+            lines[idx - 1] = typer.prompt("Updated ingredient line").strip()
+            continue
+        if action == "r":
+            if not lines:
+                typer.echo("No ingredients to remove.")
+                continue
+            idx = typer.prompt("Ingredient number to remove", type=int)
+            if idx < 1 or idx > len(lines):
+                typer.echo("Invalid ingredient number.")
+                continue
+            lines.pop(idx - 1)
+            continue
+        typer.echo("Unknown action.")
+
+
+def _persist_recipe_edit(
+    conn,
+    *,
+    recipe_id: int,
+    title: str,
+    servings: str | None,
+    instructions: str | None,
+    ingredient_lines: list[str],
+    save_changes: bool,
+) -> bool:
+    if not save_changes:
+        return False
+    ingredients = [normalize_ingredient_line(line) for line in ingredient_lines if line.strip()]
+    apply_recipe_edit(
+        conn,
+        recipe_id=recipe_id,
+        title=title.strip() or "Untitled Recipe",
+        servings=servings.strip() if servings and servings.strip() else None,
+        instructions=instructions.strip() if instructions and instructions.strip() else None,
+        ingredients=ingredients,
+    )
+    return True
+
+
+@recipe_app.command("edit")
+def recipe_edit(
+    recipe_id: int = typer.Argument(..., help="Recipe ID"),
+    db: Path = typer.Option(DEFAULT_DB, "--db", help="SQLite DB path"),
+) -> None:
+    conn = _init_connection(db)
+    recipe = get_recipe(conn, recipe_id)
+    if recipe is None:
+        conn.close()
+        typer.echo(f"Recipe {recipe_id} not found.")
+        raise typer.Exit(code=1)
+    ingredient_rows = get_ingredients(conn, recipe_id)
+
+    title = recipe["title"]
+    servings = recipe["servings"] or ""
+    instructions = recipe["instructions"] or ""
+    ingredient_lines = [row["raw_text"] for row in ingredient_rows]
+
+    while True:
+        typer.echo("")
+        typer.echo(f"Editing recipe #{recipe_id}: {title}")
+        typer.echo("Options: [t]itle, [s]ervings, [i]ngredients, [n] instructions, [w]rite/save, [c]ancel")
+        action = typer.prompt("Choose action").strip().lower()
+        if action == "t":
+            title = typer.prompt("Title", default=title).strip() or title
+            continue
+        if action == "s":
+            servings = typer.prompt("Servings", default=servings).strip()
+            continue
+        if action == "i":
+            ingredient_lines = _edit_ingredient_lines(ingredient_lines)
+            continue
+        if action == "n":
+            instructions = _edit_instruction_steps(instructions) or ""
+            continue
+        if action == "c":
+            _persist_recipe_edit(
+                conn,
+                recipe_id=recipe_id,
+                title=title,
+                servings=servings,
+                instructions=instructions,
+                ingredient_lines=ingredient_lines,
+                save_changes=False,
+            )
+            conn.close()
+            typer.echo("Cancelled. No changes were saved.")
+            return
+        if action == "w":
+            _persist_recipe_edit(
+                conn,
+                recipe_id=recipe_id,
+                title=title,
+                servings=servings,
+                instructions=instructions,
+                ingredient_lines=ingredient_lines,
+                save_changes=True,
+            )
+            conn.close()
+            typer.echo("Recipe changes saved.")
+            return
+        typer.echo("Unknown action.")
 
 
 @recipe_app.command("classify-recipes")

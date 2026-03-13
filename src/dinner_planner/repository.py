@@ -262,3 +262,84 @@ def list_planner_candidates(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     )
     return list(cursor.fetchall())
 
+
+def update_recipe_core_fields(
+    conn: sqlite3.Connection,
+    *,
+    recipe_id: int,
+    title: str,
+    servings: str | None,
+    instructions: str | None,
+) -> None:
+    conn.execute(
+        """
+        UPDATE recipes
+        SET title = ?,
+            servings = ?,
+            instructions = ?,
+            status = 'active'
+        WHERE id = ?
+        """,
+        (title, servings, instructions, recipe_id),
+    )
+
+
+def insert_recipe_ingredient(
+    conn: sqlite3.Connection,
+    *,
+    recipe_id: int,
+    ingredient: IngredientRecord,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO ingredients (
+            recipe_id, raw_text, name_normalized, quantity_value, quantity_unit, preparation, is_optional
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            recipe_id,
+            ingredient.raw_text,
+            ingredient.name_normalized,
+            ingredient.quantity_value,
+            ingredient.quantity_unit,
+            ingredient.preparation,
+            1 if ingredient.is_optional else 0,
+        ),
+    )
+
+
+def delete_recipe_ingredients(conn: sqlite3.Connection, *, recipe_id: int) -> None:
+    conn.execute("DELETE FROM ingredients WHERE recipe_id = ?", (recipe_id,))
+
+
+def replace_recipe_ingredients(
+    conn: sqlite3.Connection,
+    *,
+    recipe_id: int,
+    ingredients: Iterable[IngredientRecord],
+) -> None:
+    delete_recipe_ingredients(conn, recipe_id=recipe_id)
+    for ingredient in ingredients:
+        insert_recipe_ingredient(conn, recipe_id=recipe_id, ingredient=ingredient)
+
+
+def apply_recipe_edit(
+    conn: sqlite3.Connection,
+    *,
+    recipe_id: int,
+    title: str,
+    servings: str | None,
+    instructions: str | None,
+    ingredients: Iterable[IngredientRecord],
+) -> None:
+    with conn:
+        update_recipe_core_fields(
+            conn,
+            recipe_id=recipe_id,
+            title=title,
+            servings=servings,
+            instructions=instructions,
+        )
+        replace_recipe_ingredients(conn, recipe_id=recipe_id, ingredients=ingredients)
+
