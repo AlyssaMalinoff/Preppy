@@ -300,6 +300,119 @@ def _edit_ingredient_lines(initial_lines: list[str]) -> list[str]:
         typer.echo("Unknown action.")
 
 
+def _parse_continuous_ingredient_input(raw: str) -> list[str]:
+    items = [item.strip() for item in raw.split(",") if item.strip()]
+    if not items:
+        raise ValueError("Provide at least one ingredient.")
+    if any(item.startswith("-") for item in items):
+        raise ValueError("Continuous mode does not accept list notation. Remove leading '-'.")
+    return items
+
+
+def _parse_list_ingredient_lines(lines: list[str]) -> list[str]:
+    parsed: list[str] = []
+    for line in lines:
+        text = line.strip()
+        if not text:
+            continue
+        if not text.startswith("-"):
+            raise ValueError("List mode requires each ingredient line to start with '-'.")
+        body = text[1:].strip()
+        if not body:
+            raise ValueError("List item cannot be empty.")
+        if "," in body:
+            raise ValueError("List mode does not accept comma-separated ingredients.")
+        parsed.append(body)
+    if not parsed:
+        raise ValueError("Provide at least one ingredient.")
+    return parsed
+
+
+def _capture_list_ingredient_lines() -> list[str]:
+    typer.echo("Enter one ingredient per line using list notation (e.g. -1 potato).")
+    typer.echo("Submit an empty line when done.")
+    while True:
+        raw_lines: list[str] = []
+        while True:
+            line = typer.prompt("", prompt_suffix="")
+            if not line.strip():
+                break
+            raw_lines.append(line)
+        try:
+            return _parse_list_ingredient_lines(raw_lines)
+        except ValueError as exc:
+            typer.echo(f"Invalid list input: {exc}")
+            typer.echo("Please re-enter the full list.")
+
+
+def _capture_instruction_steps() -> list[str]:
+    steps: list[str] = []
+    step_number = 1
+    while True:
+        step = typer.prompt(f"Step {step_number}").strip()
+        if not step:
+            if not steps:
+                typer.echo("At least one step is required.")
+                continue
+            typer.echo("Step text cannot be empty.")
+            continue
+        steps.append(step)
+        another = typer.prompt("Add another step? [y/N]").strip().lower()
+        if another not in {"y", "yes"}:
+            return steps
+        step_number += 1
+
+
+def _build_manual_raw_text(
+    *,
+    title: str,
+    servings: str | None,
+    ingredient_lines: list[str],
+    instruction_steps: list[str],
+) -> str:
+    lines = [f"Title: {title.strip()}"]
+    if servings:
+        lines.append(f"Servings: {servings.strip()}")
+    lines.append("Ingredients:")
+    lines.extend(f"- {line}" for line in ingredient_lines)
+    lines.append("Instructions:")
+    for idx, step in enumerate(instruction_steps, start=1):
+        lines.append(f"Step {idx}: {step}")
+    return "\n".join(lines).strip()
+
+
+def _create_manual_recipe(
+    conn,
+    *,
+    title: str,
+    servings: str | None,
+    ingredient_lines: list[str],
+    instruction_steps: list[str],
+) -> int:
+    normalized_ingredients = [
+        normalize_ingredient_line(line) for line in ingredient_lines if line.strip()
+    ]
+    instructions = _steps_to_instruction_text(instruction_steps)
+    raw_text = _build_manual_raw_text(
+        title=title,
+        servings=servings,
+        ingredient_lines=ingredient_lines,
+        instruction_steps=instruction_steps,
+    )
+    return insert_recipe(
+        conn,
+        title=title.strip() or "Untitled Recipe",
+        servings=servings.strip() if servings and servings.strip() else None,
+        instructions=instructions,
+        source_type="manual",
+        source_path=None,
+        raw_text=raw_text,
+        parse_confidence=1.0,
+        ingredients=normalized_ingredients,
+        issues=[],
+    )
+
+
 def _persist_recipe_edit(
     conn,
     *,
@@ -322,6 +435,47 @@ def _persist_recipe_edit(
         ingredients=ingredients,
     )
     return True
+
+
+@recipe_app.command("add")
+def recipe_add(
+    db: Path = typer.Option(DEFAULT_DB, "--db", help="SQLite DB path"),
+) -> None:
+    conn = _init_connection(db)
+    title = ""
+    while not title.strip():
+        title = typer.prompt("Title").strip()
+        if not title:
+            typer.echo("Title is required.")
+    servings = typer.prompt("Servings (optional)", default="").strip()
+
+    ingredient_mode = ""
+    while ingredient_mode not in {"c", "continuous", "l", "list"}:
+        ingredient_mode = typer.prompt("Ingredient input mode [continuous/list]").strip().lower()
+        if ingredient_mode not in {"c", "continuous", "l", "list"}:
+            typer.echo("Choose either 'continuous' or 'list'.")
+
+    if ingredient_mode in {"c", "continuous"}:
+        ingredient_lines: list[str] = []
+        while not ingredient_lines:
+            raw = typer.prompt("Ingredients (comma-separated)").strip()
+            try:
+                ingredient_lines = _parse_continuous_ingredient_input(raw)
+            except ValueError as exc:
+                typer.echo(f"Invalid continuous input: {exc}")
+    else:
+        ingredient_lines = _capture_list_ingredient_lines()
+
+    instruction_steps = _capture_instruction_steps()
+    recipe_id = _create_manual_recipe(
+        conn,
+        title=title,
+        servings=servings or None,
+        ingredient_lines=ingredient_lines,
+        instruction_steps=instruction_steps,
+    )
+    conn.close()
+    typer.echo(f"[#{recipe_id}] {title} (manual)")
 
 
 @recipe_app.command("edit")

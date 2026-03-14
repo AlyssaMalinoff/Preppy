@@ -3,7 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from dinner_planner.cli import (
+    _create_manual_recipe,
     _instructions_to_steps,
+    _parse_continuous_ingredient_input,
+    _parse_list_ingredient_lines,
     _persist_recipe_edit,
     _steps_to_instruction_text,
 )
@@ -126,4 +129,54 @@ def test_cancel_path_does_not_persist_changes(tmp_path: Path):
     assert before["title"] == after["title"]
     assert before["servings"] == after["servings"]
     assert len(before_ingredients) == len(after_ingredients)
+
+
+def test_parse_continuous_ingredient_input():
+    items = _parse_continuous_ingredient_input("1 potato, 3 onions, 5 garlic cloves")
+    assert items == ["1 potato", "3 onions", "5 garlic cloves"]
+
+
+def test_parse_continuous_rejects_list_notation():
+    try:
+        _parse_continuous_ingredient_input("-1 potato, -2 onions")
+        assert False, "Expected ValueError for mixed/mismatched notation"
+    except ValueError as exc:
+        assert "does not accept list notation" in str(exc)
+
+
+def test_parse_list_ingredient_lines():
+    items = _parse_list_ingredient_lines(["-1 potato", "-3 onions", "-5 garlic cloves"])
+    assert items == ["1 potato", "3 onions", "5 garlic cloves"]
+
+
+def test_parse_list_rejects_continuous_like_line():
+    try:
+        _parse_list_ingredient_lines(["-1 potato, 3 onions"])
+        assert False, "Expected ValueError for comma-separated list item"
+    except ValueError as exc:
+        assert "does not accept comma-separated ingredients" in str(exc)
+
+
+def test_create_manual_recipe_persists_normalized_ingredients_and_steps(tmp_path: Path):
+    conn = connect(tmp_path / "test.db")
+    init_db(conn)
+    recipe_id = _create_manual_recipe(
+        conn,
+        title="Manual Test",
+        servings="2 servings",
+        ingredient_lines=["1 1/2 cups chick peas", "2 tablespoons olive oil"],
+        instruction_steps=["Prep ingredients.", "Cook and serve."],
+    )
+
+    recipe = get_recipe(conn, recipe_id)
+    ingredients = get_ingredients(conn, recipe_id)
+    conn.close()
+
+    assert recipe is not None
+    assert recipe["source_type"] == "manual"
+    assert recipe["parse_confidence"] == 1.0
+    assert recipe["instructions"] == "Step 1\nPrep ingredients.\nStep 2\nCook and serve."
+    assert len(ingredients) == 2
+    assert any(item["name_normalized"] == "chickpeas" for item in ingredients)
+    assert any(item["quantity_unit"] == "tbsp" for item in ingredients)
 
