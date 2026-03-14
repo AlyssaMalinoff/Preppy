@@ -5,7 +5,8 @@ This project currently focuses on:
 - importing recipes from text-based PDFs (single file or batch folder),
 - extracting core recipe sections (title, ingredients, instructions, servings),
 - normalizing ingredient names and units for consistent storage,
-- flagging uncertain or omitted lines for review instead of silently dropping data.
+-manually uploading recipes via terminal
+
 
 ## Quick start
 
